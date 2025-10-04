@@ -1,26 +1,50 @@
 import { Request, Response } from 'express';
-import Module from '../models/Module';
-import Progress from '../models/Progress';
-import User from '../models/User';
+import { supabase } from '../config/supabase';
 import { QuizSubmission, ApiResponse, AuthRequest } from '../types';
-import { calculateLevel, calculateBadges } from '../utils/auth';
 import logger from '../utils/logger';
+
+const calculateLevel = (points: number): number => {
+  return Math.floor(points / 500) + 1;
+};
+
+const calculateBadges = (score: number, moduleType: string, streak: number): string[] => {
+  const badges: string[] = [];
+
+  if (score === 100) badges.push('Perfect Score');
+  if (score >= 90) badges.push('Excellence');
+  if (score >= 80) badges.push('Great Work');
+  if (streak >= 7) badges.push('Week Warrior');
+  if (streak >= 30) badges.push('Month Master');
+  if (moduleType === 'challenge' && score >= 70) badges.push('Eco Champion');
+
+  return badges;
+};
 
 export const getModules = async (req: Request, res: Response) => {
   try {
-    const { type, difficulty, category } = req.query;
-    
-    const filter: any = {};
-    if (type) filter.moduleType = type;
-    if (difficulty) filter.difficulty = difficulty;
-    if (category) filter.category = category;
+    const { type, difficulty } = req.query;
 
-    const modules = await Module.find(filter).select('-questions.correctAnswerIndex -questions.explanation');
-    
+    let query = supabase.from('modules').select('*');
+
+    if (type) query = query.eq('module_type', type);
+    if (difficulty) query = query.eq('difficulty', difficulty);
+
+    const { data: modules, error } = await query;
+
+    if (error) throw error;
+
+    const sanitizedModules = modules?.map(m => {
+      const questions = (m.questions as any[]).map((q: any) => ({
+        questionText: q.questionText,
+        choices: q.choices
+      }));
+      return { ...m, questions };
+    });
+
     res.json({
       success: true,
       message: 'Modules retrieved successfully',
-      data: { modules }
+      data: { modules: sanitizedModules }
     });
   } catch (error) {
     logger.error('Get modules error:', error);
@@ -35,18 +59,21 @@ export const getModules = async (req: Request, res: Response) => {
 export const getModuleById = async (req: Request, res: Response) => {
   try {
     const { moduleId } = req.params;
-    
-    const module = await Module.findById(moduleId);
-    if (!module) {
+
+    const { data: module, error } = await supabase
+      .from('modules')
+      .select('*')
+      .eq('id', moduleId)
+      .single();
+
+    if (error || !module) {
       return res.status(404).json({
         success: false,
         message: 'Module not found'
       });
     }
 
-    // Don't send correct answers to frontend
-    const moduleData = module.toObject();
-    moduleData.questions = moduleData.questions.map(q => ({
+    const sanitizedQuestions = (module.questions as any[]).map((q: any) => ({
       questionText: q.questionText,
       choices: q.choices
     }));
@@ -54,7 +81,12 @@ export const getModuleById = async (req: Request, res: Response) => {
     res.json({
       success: true,
       message: 'Module retrieved successfully',
-      data: { module: moduleData }
+      data: {
+        module: {
+          ...module,
+          questions: sanitizedQuestions
+        }
+      }
     });
   } catch (error) {
     logger.error('Get module by ID error:', error);
@@ -70,71 +102,77 @@ export const submitQuiz = async (req: AuthRequest, res: Response) => {
   try {
     const { moduleId } = req.params;
     const { answers, timeSpent }: QuizSubmission = req.body;
-    const userId = req.user!._id;
+    const userId = req.user!.id;
 
-    // Get module with correct answers
-    const module = await Module.findById(moduleId);
-    if (!module) {
+    const { data: module, error: moduleError } = await supabase
+      .from('modules')
+      .select('*')
+      .eq('id', moduleId)
+      .single();
+
+    if (moduleError || !module) {
       return res.status(404).json({
         success: false,
         message: 'Module not found'
       });
     }
 
-    // Calculate score
     let correctAnswers = 0;
-    const totalQuestions = module.questions.length;
-    
+    const questions = module.questions as any[];
+    const totalQuestions = questions.length;
+
     answers.forEach((answer, index) => {
-      if (answer === module.questions[index].correctAnswerIndex) {
+      if (answer === questions[index].correctAnswerIndex) {
         correctAnswers++;
       }
     });
 
     const score = Math.round((correctAnswers / totalQuestions) * 100);
-    const completed = score >= 60; // 60% to pass
+    const completed = score >= 60;
 
-    // Calculate points earned (base points * score multiplier)
-    const pointsEarned = Math.round(module.points * (score / 100));
+    const pointsEarned = Math.round(module.points_reward * (score / 100));
 
-    // Get user's current data
-    const user = await User.findById(userId);
-    if (!user) {
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (userError || !user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    // Calculate new badges
-    const newBadges = calculateBadges(score, module.moduleType, user.streak);
-    const allBadges = [...new Set([...user.badges, ...newBadges])];
+    const currentStreak = 0;
+    const newBadges = calculateBadges(score, module.module_type, currentStreak);
+    const existingBadges = user.badges as string[] || [];
+    const allBadges = [...new Set([...existingBadges, ...newBadges])];
 
-    // Update user points and level
     const newPoints = user.points + pointsEarned;
     const newLevel = calculateLevel(newPoints);
 
-    // Update user
-    await User.findByIdAndUpdate(userId, {
-      points: newPoints,
-      level: newLevel,
-      badges: allBadges,
-      streak: completed ? user.streak + 1 : 0
-    });
+    await supabase
+      .from('users')
+      .update({
+        points: newPoints,
+        badges: allBadges,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
 
-    // Save progress
-    const progress = new Progress({
-      userId,
-      moduleId,
-      score,
-      completed,
-      answers,
-      ecoActions: completed ? 1 : 0,
-      badgesEarned: newBadges,
-      timeSpent
-    });
-
-    await progress.save();
+    await supabase
+      .from('progress')
+      .insert({
+        user_id: userId,
+        module_id: moduleId,
+        score,
+        completed,
+        answers,
+        eco_actions: completed ? 1 : 0,
+        badges_earned: newBadges
+      });
 
     logger.info(`Quiz submitted: User ${userId}, Module ${moduleId}, Score ${score}%`);
 
@@ -150,7 +188,7 @@ export const submitQuiz = async (req: AuthRequest, res: Response) => {
         newLevel,
         correctAnswers,
         totalQuestions,
-        explanations: module.questions.map(q => q.explanation)
+        explanations: questions.map((q: any) => q.explanation)
       }
     });
   } catch (error) {
@@ -165,19 +203,30 @@ export const submitQuiz = async (req: AuthRequest, res: Response) => {
 
 export const getUserProgress = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user!._id;
-    
-    const progress = await Progress.find({ userId })
-      .populate('moduleId', 'title category difficulty points')
-      .sort({ timestamp: -1 });
+    const userId = req.user!.id;
+
+    const { data: progress, error } = await supabase
+      .from('progress')
+      .select(`
+        *,
+        modules (
+          title,
+          difficulty,
+          points_reward
+        )
+      `)
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: false });
+
+    if (error) throw error;
 
     const stats = {
-      totalModules: progress.length,
-      completedModules: progress.filter(p => p.completed).length,
-      averageScore: progress.length > 0 
+      totalModules: progress?.length || 0,
+      completedModules: progress?.filter(p => p.completed).length || 0,
+      averageScore: progress && progress.length > 0
         ? Math.round(progress.reduce((sum, p) => sum + p.score, 0) / progress.length)
         : 0,
-      totalTimeSpent: progress.reduce((sum, p) => sum + p.timeSpent, 0)
+      totalTimeSpent: 0
     };
 
     res.json({

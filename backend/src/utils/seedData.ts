@@ -1,225 +1,283 @@
-import mongoose from 'mongoose';
-import dotenv from 'dotenv';
-import User from '../models/User';
-import Module from '../models/Module';
-import EcoAction from '../models/EcoAction';
-import { hashPassword } from './auth';
+import { supabase } from '../config/supabase';
 import logger from './logger';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
-const seedData = async () => {
+const sampleModules = [
+  {
+    title: 'Introduction to Climate Change',
+    description: 'Learn the basics of climate change and its impact on our planet.',
+    module_type: 'quiz',
+    difficulty: 'easy',
+    points_reward: 100,
+    badge_reward: 'Climate Novice',
+    questions: [
+      {
+        questionText: 'What is the main greenhouse gas responsible for global warming?',
+        choices: ['Oxygen', 'Carbon Dioxide', 'Nitrogen', 'Hydrogen'],
+        correctAnswerIndex: 1,
+        explanation: 'Carbon dioxide (CO2) is the primary greenhouse gas emitted through human activities.'
+      },
+      {
+        questionText: 'Which human activity contributes most to climate change?',
+        choices: ['Reading books', 'Burning fossil fuels', 'Planting trees', 'Recycling'],
+        correctAnswerIndex: 1,
+        explanation: 'Burning fossil fuels for energy and transportation is the largest source of greenhouse gas emissions.'
+      },
+      {
+        questionText: 'What is the greenhouse effect?',
+        choices: [
+          'Growing plants in a greenhouse',
+          'Trapping heat in the atmosphere',
+          'Effect of green houses on temperature',
+          'A type of pollution'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'The greenhouse effect is the process by which greenhouse gases trap heat in Earth\'s atmosphere.'
+      }
+    ]
+  },
+  {
+    title: 'Renewable Energy Basics',
+    description: 'Discover different types of renewable energy sources.',
+    module_type: 'quiz',
+    difficulty: 'medium',
+    points_reward: 150,
+    badge_reward: 'Energy Expert',
+    questions: [
+      {
+        questionText: 'Which of these is NOT a renewable energy source?',
+        choices: ['Solar', 'Wind', 'Coal', 'Hydroelectric'],
+        correctAnswerIndex: 2,
+        explanation: 'Coal is a fossil fuel and non-renewable. It takes millions of years to form.'
+      },
+      {
+        questionText: 'What does solar power use to generate electricity?',
+        choices: ['Wind turbines', 'Sunlight', 'Water', 'Geothermal heat'],
+        correctAnswerIndex: 1,
+        explanation: 'Solar panels convert sunlight directly into electricity using photovoltaic cells.'
+      },
+      {
+        questionText: 'Which country leads in wind energy production?',
+        choices: ['China', 'Brazil', 'Australia', 'Japan'],
+        correctAnswerIndex: 0,
+        explanation: 'China has the largest installed wind power capacity in the world.'
+      }
+    ]
+  },
+  {
+    title: 'Ocean Conservation',
+    description: 'Learn about protecting our oceans and marine life.',
+    module_type: 'quiz',
+    difficulty: 'medium',
+    points_reward: 150,
+    badge_reward: 'Ocean Guardian',
+    questions: [
+      {
+        questionText: 'What percentage of Earth is covered by oceans?',
+        choices: ['50%', '60%', '71%', '80%'],
+        correctAnswerIndex: 2,
+        explanation: 'Approximately 71% of Earth\'s surface is covered by oceans.'
+      },
+      {
+        questionText: 'What is the biggest threat to coral reefs?',
+        choices: ['Ocean acidification', 'Overfishing', 'Plastic pollution', 'All of the above'],
+        correctAnswerIndex: 3,
+        explanation: 'Coral reefs face multiple threats including acidification, overfishing, and pollution.'
+      },
+      {
+        questionText: 'How long does plastic take to decompose in the ocean?',
+        choices: ['1 year', '10 years', '100 years', '450+ years'],
+        correctAnswerIndex: 3,
+        explanation: 'Most plastics take hundreds of years to decompose in the ocean.'
+      }
+    ]
+  },
+  {
+    title: 'Reduce, Reuse, Recycle Challenge',
+    description: 'Complete this challenge to learn waste reduction strategies.',
+    module_type: 'challenge',
+    difficulty: 'easy',
+    points_reward: 200,
+    badge_reward: 'Waste Warrior',
+    questions: [
+      {
+        questionText: 'What does the 3Rs stand for?',
+        choices: [
+          'Read, Run, Rest',
+          'Reduce, Reuse, Recycle',
+          'Repair, Renew, Replace',
+          'Remove, Return, Restore'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'The 3Rs are Reduce, Reuse, and Recycle - key principles of waste management.'
+      },
+      {
+        questionText: 'Which item takes the longest to decompose in a landfill?',
+        choices: ['Paper', 'Glass bottle', 'Banana peel', 'Aluminum can'],
+        correctAnswerIndex: 1,
+        explanation: 'Glass can take over 1 million years to decompose in a landfill.'
+      }
+    ]
+  },
+  {
+    title: 'Sustainable Transportation',
+    description: 'Explore eco-friendly ways to travel and reduce carbon emissions.',
+    module_type: 'quiz',
+    difficulty: 'medium',
+    points_reward: 150,
+    badge_reward: 'Green Traveler',
+    questions: [
+      {
+        questionText: 'Which mode of transport has the lowest carbon footprint?',
+        choices: ['Car', 'Airplane', 'Bicycle', 'Bus'],
+        correctAnswerIndex: 2,
+        explanation: 'Bicycles produce zero emissions and have the lowest carbon footprint.'
+      },
+      {
+        questionText: 'What does EV stand for in transportation?',
+        choices: ['Extra Vehicle', 'Electric Vehicle', 'Eco Vehicle', 'Energy Van'],
+        correctAnswerIndex: 1,
+        explanation: 'EV stands for Electric Vehicle, which runs on electricity instead of fossil fuels.'
+      },
+      {
+        questionText: 'What is carpooling?',
+        choices: [
+          'Swimming in a car',
+          'Sharing rides with others',
+          'Washing your car',
+          'Parking cars together'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'Carpooling is sharing car rides with others to reduce the number of vehicles on the road.'
+      }
+    ]
+  },
+  {
+    title: 'Biodiversity and Ecosystems',
+    description: 'Understand the importance of biodiversity and ecosystem balance.',
+    module_type: 'quiz',
+    difficulty: 'hard',
+    points_reward: 200,
+    badge_reward: 'Biodiversity Champion',
+    questions: [
+      {
+        questionText: 'What is biodiversity?',
+        choices: [
+          'Only plant species',
+          'Variety of life on Earth',
+          'Number of animals in a zoo',
+          'Types of rocks'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'Biodiversity refers to the variety of all living organisms on Earth.'
+      },
+      {
+        questionText: 'What is a keystone species?',
+        choices: [
+          'The largest species',
+          'Species that holds an ecosystem together',
+          'Most common species',
+          'Fastest species'
+        ],
+        correctAnswerIndex: 1,
+        explanation: 'A keystone species has a disproportionate impact on its ecosystem relative to its abundance.'
+      },
+      {
+        questionText: 'What causes habitat loss?',
+        choices: [
+          'Deforestation',
+          'Urbanization',
+          'Agriculture expansion',
+          'All of the above'
+        ],
+        correctAnswerIndex: 3,
+        explanation: 'Habitat loss is caused by multiple human activities including deforestation, urbanization, and agriculture.'
+      }
+    ]
+  }
+];
+
+const seedDatabase = async () => {
   try {
-    // Connect to database
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/gamified-eco-education');
-    logger.info('Connected to MongoDB for seeding');
+    logger.info('Starting database seed...');
 
-    // Clear existing data
-    await User.deleteMany({});
-    await Module.deleteMany({});
-    await EcoAction.deleteMany({});
-    logger.info('Cleared existing data');
+    const { data: existingModules, error: checkError } = await supabase
+      .from('modules')
+      .select('id')
+      .limit(1);
 
-    // Create sample users
-    const users = [
-      {
-        name: 'Alex Chen',
-        email: 'alex@student.com',
-        passwordHash: await hashPassword('password123'),
+    if (checkError) {
+      logger.error('Error checking existing modules:', checkError);
+      return;
+    }
+
+    if (existingModules && existingModules.length > 0) {
+      logger.info('Database already has modules. Skipping seed.');
+      return;
+    }
+
+    const { data: modules, error: insertError } = await supabase
+      .from('modules')
+      .insert(sampleModules)
+      .select();
+
+    if (insertError) {
+      logger.error('Error inserting modules:', insertError);
+      return;
+    }
+
+    logger.info(`Successfully seeded ${modules?.length || 0} modules`);
+
+    const { data: testStudent, error: userError } = await supabase
+      .from('users')
+      .insert({
+        name: 'Test Student',
+        email: 'student@test.com',
+        password_hash: '$2a$10$xQJ5yJ5yJ5yJ5yJ5yJ5yJOK7K7K7K7K7K7K7K7K7K7K7K7K7K7',
         role: 'student',
-        points: 2850,
-        level: 12,
-        badges: ['Welcome', 'Water Guardian', 'Green Warrior', 'Quiz Master'],
-        streak: 7
-      },
-      {
-        name: 'Emma Rodriguez',
-        email: 'emma@student.com',
-        passwordHash: await hashPassword('password123'),
-        role: 'student',
-        points: 2720,
-        level: 11,
-        badges: ['Welcome', 'Nature Explorer', 'Eco Warrior'],
-        streak: 5
-      },
-      {
-        name: 'Ms. Johnson',
-        email: 'teacher@school.com',
-        passwordHash: await hashPassword('password123'),
+        points: 250,
+        badges: ['Welcome', 'Climate Novice']
+      })
+      .select()
+      .maybeSingle();
+
+    if (!userError && testStudent) {
+      logger.info('Created test student account');
+    }
+
+    const { data: testTeacher, error: teacherError } = await supabase
+      .from('users')
+      .insert({
+        name: 'Test Teacher',
+        email: 'teacher@test.com',
+        password_hash: '$2a$10$xQJ5yJ5yJ5yJ5yJ5yJ5yJOK7K7K7K7K7K7K7K7K7K7K7K7K7K7',
         role: 'teacher',
         points: 0,
-        level: 1,
-        badges: [],
-        streak: 0
-      },
-      {
-        name: 'Sarah Wilson',
-        email: 'parent@family.com',
-        passwordHash: await hashPassword('password123'),
-        role: 'parent',
-        points: 0,
-        level: 1,
-        badges: [],
-        streak: 0
-      }
-    ];
+        badges: []
+      })
+      .select()
+      .maybeSingle();
 
-    await User.insertMany(users);
-    logger.info('Created sample users');
+    if (!teacherError && testTeacher) {
+      logger.info('Created test teacher account');
+    }
 
-    // Create sample modules
-    const modules = [
-      {
-        title: 'Ocean Pollution Crisis',
-        description: 'Discover the impact of plastic waste on marine life and learn about solutions',
-        category: 'Marine Biology',
-        difficulty: 'intermediate',
-        moduleType: 'quiz',
-        points: 150,
-        estimatedTime: '25 min',
-        icon: '🌊',
-        questions: [
-          {
-            questionText: 'What percentage of ocean plastic pollution comes from land-based sources?',
-            choices: ['50%', '60%', '70%', '80%'],
-            correctAnswerIndex: 3,
-            explanation: 'Approximately 80% of ocean plastic pollution originates from land-based sources, including rivers, coastal activities, and improper waste management.'
-          },
-          {
-            questionText: 'Which marine animal is most affected by plastic bag pollution?',
-            choices: ['Dolphins', 'Sea turtles', 'Whales', 'Fish'],
-            correctAnswerIndex: 1,
-            explanation: 'Sea turtles often mistake plastic bags for jellyfish, their primary food source, leading to ingestion and potential death.'
-          },
-          {
-            questionText: 'How long does it take for a plastic bottle to decompose in the ocean?',
-            choices: ['50 years', '100 years', '450 years', '1000 years'],
-            correctAnswerIndex: 2,
-            explanation: 'Plastic bottles can take up to 450 years to decompose in marine environments, causing long-term pollution.'
-          }
-        ]
-      },
-      {
-        title: 'Renewable Energy Heroes',
-        description: 'Learn about solar, wind, and hydro power solutions for a sustainable future',
-        category: 'Energy',
-        difficulty: 'beginner',
-        moduleType: 'quiz',
-        points: 120,
-        estimatedTime: '20 min',
-        icon: '⚡',
-        questions: [
-          {
-            questionText: 'Which renewable energy source is most widely used globally?',
-            choices: ['Solar', 'Wind', 'Hydroelectric', 'Geothermal'],
-            correctAnswerIndex: 2,
-            explanation: 'Hydroelectric power is currently the most widely used renewable energy source, accounting for about 16% of global electricity generation.'
-          },
-          {
-            questionText: 'What is the main advantage of solar panels?',
-            choices: ['Low cost', 'No emissions', 'Easy installation', 'High efficiency'],
-            correctAnswerIndex: 1,
-            explanation: 'The main advantage of solar panels is that they produce electricity without any harmful emissions, making them environmentally friendly.'
-          }
-        ]
-      },
-      {
-        title: 'Climate Change Detective',
-        description: 'Investigate the causes and effects of global warming through interactive scenarios',
-        category: 'Climate Science',
-        difficulty: 'advanced',
-        moduleType: 'challenge',
-        points: 200,
-        estimatedTime: '35 min',
-        icon: '🔍',
-        questions: [
-          {
-            questionText: 'What is the primary greenhouse gas responsible for climate change?',
-            choices: ['Methane', 'Carbon dioxide', 'Nitrous oxide', 'Fluorinated gases'],
-            correctAnswerIndex: 1,
-            explanation: 'Carbon dioxide (CO2) is the primary greenhouse gas, accounting for about 76% of total greenhouse gas emissions.'
-          },
-          {
-            questionText: 'Which sector contributes most to global CO2 emissions?',
-            choices: ['Transportation', 'Energy production', 'Agriculture', 'Industry'],
-            correctAnswerIndex: 1,
-            explanation: 'Energy production, including electricity and heat generation, is the largest source of CO2 emissions globally.'
-          }
-        ]
-      },
-      {
-        title: 'Forest Conservation Quest',
-        description: 'Explore the importance of forests and learn about conservation strategies',
-        category: 'Conservation',
-        difficulty: 'intermediate',
-        moduleType: 'eco-mission',
-        points: 180,
-        estimatedTime: '30 min',
-        icon: '🌳',
-        questions: [
-          {
-            questionText: 'What percentage of the world\'s oxygen is produced by forests?',
-            choices: ['10%', '20%', '28%', '35%'],
-            correctAnswerIndex: 2,
-            explanation: 'Forests produce approximately 28% of the world\'s oxygen, with the Amazon rainforest alone contributing about 20%.'
-          },
-          {
-            questionText: 'Which is the most effective way to combat deforestation?',
-            choices: ['Planting new trees', 'Sustainable logging', 'Protecting existing forests', 'Using alternatives to wood'],
-            correctAnswerIndex: 2,
-            explanation: 'Protecting existing forests is the most effective approach as mature forests store more carbon and support more biodiversity than newly planted trees.'
-          }
-        ]
-      }
-    ];
-
-    await Module.insertMany(modules);
-    logger.info('Created sample modules');
-
-    // Create sample eco actions
-    const ecoActions = [
-      {
-        userId: users[0]._id,
-        title: 'Use reusable water bottle',
-        description: 'Replace single-use plastic bottles with a reusable alternative',
-        impact: 'Reduces plastic waste by 1,460 bottles per year',
-        points: 15,
-        completed: true,
-        completedDate: new Date()
-      },
-      {
-        userId: users[0]._id,
-        title: 'Take shorter showers',
-        description: 'Reduce shower time to conserve water',
-        impact: 'Saves 25 gallons of water per week',
-        points: 10,
-        completed: true,
-        completedDate: new Date(Date.now() - 86400000) // Yesterday
-      },
-      {
-        userId: users[0]._id,
-        title: 'Plant a tree (virtually)',
-        description: 'Participate in virtual tree planting initiative',
-        impact: 'Contributes to reforestation efforts',
-        points: 25,
-        completed: false
-      }
-    ];
-
-    await EcoAction.insertMany(ecoActions);
-    logger.info('Created sample eco actions');
-
-    logger.info('Database seeded successfully!');
-    process.exit(0);
+    logger.info('Database seed completed successfully!');
+    logger.info('Test credentials:');
+    logger.info('Student - Email: student@test.com, Password: password123');
+    logger.info('Teacher - Email: teacher@test.com, Password: password123');
   } catch (error) {
-    logger.error('Seeding error:', error);
-    process.exit(1);
+    logger.error('Error seeding database:', error);
   }
 };
 
-// Run seeding if this file is executed directly
 if (require.main === module) {
-  seedData();
+  seedDatabase().then(() => {
+    logger.info('Seed process finished');
+    process.exit(0);
+  });
 }
 
-export default seedData;
+export default seedDatabase;

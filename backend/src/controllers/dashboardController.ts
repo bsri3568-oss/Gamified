@@ -1,14 +1,11 @@
 import { Request, Response } from 'express';
-import User from '../models/User';
-import Module from '../models/Module';
-import Progress from '../models/Progress';
-import EcoAction from '../models/EcoAction';
+import { supabase } from '../config/supabase';
 import { AuthRequest } from '../types';
 import logger from '../utils/logger';
 
 export const getDashboard = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user!._id;
+    const userId = req.user!.id;
     const userRole = req.user!.role;
 
     if (userRole === 'student') {
@@ -35,39 +32,54 @@ export const getDashboard = async (req: AuthRequest, res: Response) => {
 
 const getStudentDashboard = async (req: AuthRequest, res: Response) => {
   try {
-    const userId = req.user!._id;
+    const userId = req.user!.id;
 
-    // Get user progress
-    const userProgress = await Progress.find({ userId }).populate('moduleId');
-    const completedModuleIds = userProgress.filter(p => p.completed).map(p => p.moduleId);
+    const { data: userProgress } = await supabase
+      .from('progress')
+      .select('*, modules(*)')
+      .eq('user_id', userId);
 
-    // Get recommended modules (not completed or low scores)
-    const recommendedModules = await Module.find({
-      _id: { $nin: completedModuleIds }
-    }).limit(6);
+    const completedModuleIds = userProgress
+      ?.filter(p => p.completed)
+      .map(p => p.module_id) || [];
 
-    // Get recent eco actions
-    const ecoActions = await EcoAction.find({ userId }).sort({ createdAt: -1 }).limit(5);
+    let recommendedQuery = supabase
+      .from('modules')
+      .select('*')
+      .limit(6);
 
-    // Calculate weekly activity (mock data for now)
+    if (completedModuleIds.length > 0) {
+      recommendedQuery = recommendedQuery.not('id', 'in', `(${completedModuleIds.join(',')})`);
+    }
+
+    const { data: recommendedModules } = await recommendedQuery;
+
+    const { data: ecoActions } = await supabase
+      .from('eco_actions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
     const weeklyActivity = [65, 80, 45, 90, 75, 85, 60];
 
-    // Get recent achievements
-    const recentProgress = await Progress.find({ userId })
-      .populate('moduleId', 'title')
-      .sort({ timestamp: -1 })
+    const { data: recentProgress } = await supabase
+      .from('progress')
+      .select('*, modules(title)')
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: false })
       .limit(3);
 
     const dashboardData = {
       user: req.user,
-      recommendedModules,
-      ecoActions,
+      recommendedModules: recommendedModules || [],
+      ecoActions: ecoActions || [],
       weeklyActivity,
-      recentAchievements: recentProgress,
+      recentAchievements: recentProgress || [],
       stats: {
-        totalModules: userProgress.length,
+        totalModules: userProgress?.length || 0,
         completedModules: completedModuleIds.length,
-        averageScore: userProgress.length > 0 
+        averageScore: userProgress && userProgress.length > 0
           ? Math.round(userProgress.reduce((sum, p) => sum + p.score, 0) / userProgress.length)
           : 0
       }
@@ -90,58 +102,62 @@ const getStudentDashboard = async (req: AuthRequest, res: Response) => {
 
 const getTeacherDashboard = async (req: AuthRequest, res: Response) => {
   try {
-    // Get all students
-    const students = await User.find({ role: 'student' }).select('-passwordHash');
-    
-    // Get all progress data
-    const allProgress = await Progress.find({})
-      .populate('userId', 'name email')
-      .populate('moduleId', 'title category');
+    const { data: students } = await supabase
+      .from('users')
+      .select('id, name, email, role, points, badges, created_at')
+      .eq('role', 'student');
 
-    // Calculate class statistics
+    const { data: allProgress } = await supabase
+      .from('progress')
+      .select(`
+        *,
+        users(name, email),
+        modules(title)
+      `);
+
     const classStats = {
-      totalStudents: students.length,
-      activeToday: Math.floor(students.length * 0.85), // Mock data
-      averageScore: allProgress.length > 0 
+      totalStudents: students?.length || 0,
+      activeToday: Math.floor((students?.length || 0) * 0.85),
+      averageScore: allProgress && allProgress.length > 0
         ? Math.round(allProgress.reduce((sum, p) => sum + p.score, 0) / allProgress.length)
         : 0,
-      completionRate: allProgress.length > 0 
+      completionRate: allProgress && allProgress.length > 0
         ? Math.round((allProgress.filter(p => p.completed).length / allProgress.length) * 100)
         : 0
     };
 
-    // Get student progress summary
-    const studentProgress = students.map(student => {
-      const studentProgressData = allProgress.filter(p => 
-        p.userId && p.userId._id.toString() === student._id.toString()
-      );
-      
+    const studentProgress = students?.map(student => {
+      const studentProgressData = allProgress?.filter(p =>
+        p.user_id === student.id
+      ) || [];
+
       return {
-        id: student._id,
+        id: student.id,
         name: student.name,
-        level: student.level,
         points: student.points,
-        weeklyActivity: Math.floor(Math.random() * 40) + 60, // Mock data
+        weeklyActivity: Math.floor(Math.random() * 40) + 60,
         status: student.points > 2000 ? 'excellent' : student.points > 1000 ? 'good' : 'needs attention',
         modulesCompleted: studentProgressData.filter(p => p.completed).length,
-        averageScore: studentProgressData.length > 0 
+        averageScore: studentProgressData.length > 0
           ? Math.round(studentProgressData.reduce((sum, p) => sum + p.score, 0) / studentProgressData.length)
           : 0
       };
-    });
+    }) || [];
+
+    const recentAchievements = allProgress
+      ?.filter(p => (p.badges_earned as any[])?.length > 0)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 5)
+      .map(p => ({
+        student: (p.users as any)?.name || 'Unknown',
+        badge: (p.badges_earned as any[])[0],
+        time: p.timestamp
+      })) || [];
 
     const dashboardData = {
       classStats,
       studentProgress,
-      recentAchievements: allProgress
-        .filter(p => p.badgesEarned.length > 0)
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-        .slice(0, 5)
-        .map(p => ({
-          student: p.userId ? (p.userId as any).name : 'Unknown',
-          badge: p.badgesEarned[0],
-          time: p.timestamp
-        }))
+      recentAchievements
     };
 
     res.json({
@@ -161,47 +177,53 @@ const getTeacherDashboard = async (req: AuthRequest, res: Response) => {
 
 const getParentDashboard = async (req: AuthRequest, res: Response) => {
   try {
-    // For demo purposes, get all students (in real app, would be parent's children)
-    const children = await User.find({ role: 'student' }).select('-passwordHash').limit(2);
-    
-    const childrenData = await Promise.all(children.map(async (child) => {
-      const progress = await Progress.find({ userId: child._id })
-        .populate('moduleId', 'title')
-        .sort({ timestamp: -1 });
-      
-      const ecoActions = await EcoAction.find({ userId: child._id })
-        .sort({ createdAt: -1 })
+    const { data: children } = await supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'student')
+      .limit(2);
+
+    const childrenData = await Promise.all((children || []).map(async (child) => {
+      const { data: progress } = await supabase
+        .from('progress')
+        .select('*, modules(title)')
+        .eq('user_id', child.id)
+        .order('timestamp', { ascending: false });
+
+      const { data: ecoActions } = await supabase
+        .from('eco_actions')
+        .select('*')
+        .eq('user_id', child.id)
+        .order('created_at', { ascending: false })
         .limit(3);
 
       return {
-        id: child._id,
+        id: child.id,
         name: child.name,
-        level: child.level,
         points: child.points,
-        streak: child.streak,
         weeklyGoal: 5,
         weeklyProgress: Math.floor(Math.random() * 3) + 2,
         totalTime: `${Math.floor(Math.random() * 10) + 8}h ${Math.floor(Math.random() * 60)}m`,
-        modulesCompleted: progress.filter(p => p.completed).length,
-        averageScore: progress.length > 0 
+        modulesCompleted: progress?.filter(p => p.completed).length || 0,
+        averageScore: progress && progress.length > 0
           ? Math.round(progress.reduce((sum, p) => sum + p.score, 0) / progress.length)
           : 0,
-        recentBadges: child.badges.slice(-3).map(badge => ({
+        recentBadges: (child.badges as string[] || []).slice(-3).map(badge => ({
           name: badge,
           icon: '🏆',
           earnedDate: 'Recently'
         })),
         weeklyActivity: Array.from({ length: 7 }, () => Math.floor(Math.random() * 40) + 40),
-        recentModules: progress.slice(0, 3).map(p => ({
-          name: p.moduleId ? (p.moduleId as any).title : 'Unknown Module',
+        recentModules: (progress || []).slice(0, 3).map(p => ({
+          name: (p.modules as any)?.title || 'Unknown Module',
           score: p.score,
-          completedDate: p.timestamp.toLocaleDateString(),
-          timeSpent: `${Math.floor(p.timeSpent / 60)} min`
+          completedDate: new Date(p.timestamp).toLocaleDateString(),
+          timeSpent: '15 min'
         })),
-        ecoActions: ecoActions.map(action => ({
-          action: action.title,
-          points: action.points,
-          date: action.completedDate ? action.completedDate.toLocaleDateString() : 'Pending'
+        ecoActions: (ecoActions || []).map(action => ({
+          action: action.action_type,
+          points: action.points_earned,
+          date: new Date(action.created_at).toLocaleDateString()
         }))
       };
     }));

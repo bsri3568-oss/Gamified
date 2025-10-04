@@ -1,31 +1,27 @@
-import { Document } from 'mongoose';
+import { Request } from 'express';
 
-export interface IUser extends Document {
+export interface IUser {
+  id: string;
   name: string;
   email: string;
-  passwordHash: string;
+  password_hash: string;
   role: 'student' | 'teacher' | 'parent';
   points: number;
-  level: number;
   badges: string[];
-  streak: number;
-  avatar?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface IModule extends Document {
+export interface IModule {
+  id: string;
   title: string;
   description: string;
-  category: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  moduleType: 'quiz' | 'challenge' | 'simulation' | 'eco-mission';
-  points: number;
-  estimatedTime: string;
-  icon: string;
+  module_type: 'quiz' | 'challenge' | 'ar_module';
+  difficulty: 'easy' | 'medium' | 'hard';
   questions: IQuestion[];
-  createdAt: Date;
-  updatedAt: Date;
+  points_reward: number;
+  badge_reward?: string;
+  created_at: string;
 }
 
 export interface IQuestion {
@@ -35,35 +31,26 @@ export interface IQuestion {
   explanation: string;
 }
 
-export interface IProgress extends Document {
-  userId: string;
-  moduleId: string;
+export interface IProgress {
+  id: string;
+  user_id: string;
+  module_id: string;
   score: number;
   completed: boolean;
   answers: number[];
-  ecoActions: number;
-  badgesEarned: string[];
-  timeSpent: number;
-  timestamp: Date;
+  eco_actions: number;
+  badges_earned: string[];
+  timestamp: string;
 }
 
-export interface IEcoAction extends Document {
-  userId: string;
-  title: string;
+export interface IEcoAction {
+  id: string;
+  user_id: string;
+  action_type: string;
   description: string;
-  impact: string;
-  points: number;
-  completed: boolean;
-  completedDate?: Date;
-  createdAt: Date;
-}
-
-export interface ILeaderboard extends Document {
-  userId: string;
-  points: number;
-  level: number;
-  rank: number;
-  updatedAt: Date;
+  points_earned: number;
+  verified: boolean;
+  created_at: string;
 }
 
 export interface AuthRequest extends Request {
@@ -83,9 +70,8 @@ export interface RegisterRequest {
 }
 
 export interface QuizSubmission {
-  userId: string;
   answers: number[];
-  timeSpent: number;
+  timeSpent?: number;
 }
 
 export interface ApiResponse<T = any> {

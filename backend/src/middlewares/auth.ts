@@ -1,13 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken } from '../utils/auth';
-import User from '../models/User';
+import { supabase } from '../config/supabase';
 import { AuthRequest } from '../types';
 import logger from '../utils/logger';
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.header('Authorization');
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
@@ -15,12 +15,17 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
       });
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
-    
+    const token = authHeader.substring(7);
+
     const decoded = verifyToken(token);
-    const user = await User.findById(decoded.userId);
-    
-    if (!user) {
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', decoded.userId)
+      .single();
+
+    if (error || !user) {
       return res.status(401).json({
         success: false,
         message: 'Invalid token. User not found.'

@@ -1,25 +1,27 @@
 import { Request, Response } from 'express';
-import User from '../models/User';
+import { supabase } from '../config/supabase';
 import logger from '../utils/logger';
 
 export const getLeaderboard = async (req: Request, res: Response) => {
   try {
     const { limit = 10, role = 'student' } = req.query;
-    
-    const leaderboard = await User.find({ role })
-      .select('name points level badges streak')
-      .sort({ points: -1 })
+
+    const { data: leaderboard, error } = await supabase
+      .from('users')
+      .select('id, name, points, badges')
+      .eq('role', role)
+      .order('points', { ascending: false })
       .limit(parseInt(limit as string));
 
-    const leaderboardWithRank = leaderboard.map((user, index) => ({
+    if (error) throw error;
+
+    const leaderboardWithRank = leaderboard?.map((user, index) => ({
       rank: index + 1,
-      id: user._id,
+      id: user.id,
       name: user.name,
       points: user.points,
-      level: user.level,
-      badges: user.badges.length,
-      streak: user.streak
-    }));
+      badges: (user.badges as string[] || []).length
+    })) || [];
 
     res.json({
       success: true,
@@ -39,30 +41,40 @@ export const getLeaderboard = async (req: Request, res: Response) => {
 export const getUserRank = async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
-    
-    const user = await User.findById(userId);
-    if (!user) {
+
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (userError || !user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const rank = await User.countDocuments({
-      role: user.role,
-      points: { $gt: user.points }
-    }) + 1;
+    const { count: higherRankedCount } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', user.role)
+      .gt('points', user.points);
 
-    const totalUsers = await User.countDocuments({ role: user.role });
+    const rank = (higherRankedCount || 0) + 1;
+
+    const { count: totalUsers } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', user.role);
 
     res.json({
       success: true,
       message: 'User rank retrieved successfully',
       data: {
         rank,
-        totalUsers,
-        points: user.points,
-        level: user.level
+        totalUsers: totalUsers || 0,
+        points: user.points
       }
     });
   } catch (error) {

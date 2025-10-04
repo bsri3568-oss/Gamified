@@ -1,15 +1,19 @@
 import { Request, Response } from 'express';
-import User from '../models/User';
+import { supabase } from '../config/supabase';
 import { generateToken, hashPassword, comparePassword } from '../utils/auth';
 import { RegisterRequest, LoginRequest, ApiResponse } from '../types';
 import logger from '../utils/logger';
 
-export const register = async (req: Request<{}, ApiResponse, RegisterRequest>, res: Response) => {
+export const register = async (req: Request<{}, ApiResponse, RegisterRequest>, res: Response): Promise<Response> => {
   try {
     const { name, email, password, role } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const { data: existingUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -17,25 +21,24 @@ export const register = async (req: Request<{}, ApiResponse, RegisterRequest>, r
       });
     }
 
-    // Hash password
     const passwordHash = await hashPassword(password);
 
-    // Create user
-    const user = new User({
-      name,
-      email,
-      passwordHash,
-      role,
-      points: role === 'student' ? 100 : 0, // Welcome bonus for students
-      level: 1,
-      badges: role === 'student' ? ['Welcome'] : [],
-      streak: 0
-    });
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert({
+        name,
+        email,
+        password_hash: passwordHash,
+        role,
+        points: role === 'student' ? 100 : 0,
+        badges: role === 'student' ? ['Welcome'] : []
+      })
+      .select()
+      .single();
 
-    await user.save();
+    if (error) throw error;
 
-    // Generate token
-    const token = generateToken(user._id.toString());
+    const token = generateToken(user.id);
 
     logger.info(`New user registered: ${email} as ${role}`);
 
@@ -45,14 +48,12 @@ export const register = async (req: Request<{}, ApiResponse, RegisterRequest>, r
       data: {
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
           points: user.points,
-          level: user.level,
-          badges: user.badges,
-          streak: user.streak
+          badges: user.badges
         }
       }
     });
@@ -66,21 +67,24 @@ export const register = async (req: Request<{}, ApiResponse, RegisterRequest>, r
   }
 };
 
-export const login = async (req: Request<{}, ApiResponse, LoginRequest>, res: Response) => {
+export const login = async (req: Request<{}, ApiResponse, LoginRequest>, res: Response): Promise<Response> => {
   try {
     const { email, password } = req.body;
 
-    // Find user
-    const user = await User.findOne({ email }).select('+passwordHash');
-    if (!user) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (error || !user) {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password'
       });
     }
 
-    // Check password
-    const isPasswordValid = await comparePassword(password, user.passwordHash);
+    const isPasswordValid = await comparePassword(password, user.password_hash);
     if (!isPasswordValid) {
       return res.status(401).json({
         success: false,
@@ -88,8 +92,7 @@ export const login = async (req: Request<{}, ApiResponse, LoginRequest>, res: Re
       });
     }
 
-    // Generate token
-    const token = generateToken(user._id.toString());
+    const token = generateToken(user.id);
 
     logger.info(`User logged in: ${email}`);
 
@@ -99,14 +102,12 @@ export const login = async (req: Request<{}, ApiResponse, LoginRequest>, res: Re
       data: {
         token,
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           role: user.role,
           points: user.points,
-          level: user.level,
-          badges: user.badges,
-          streak: user.streak
+          badges: user.badges
         }
       }
     });
@@ -120,10 +121,16 @@ export const login = async (req: Request<{}, ApiResponse, LoginRequest>, res: Re
   }
 };
 
-export const getProfile = async (req: any, res: Response) => {
+export const getProfile = async (req: any, res: Response): Promise<Response> => {
   try {
-    const user = await User.findById(req.user._id);
-    
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, name, email, role, points, badges, created_at, updated_at')
+      .eq('id', req.user.id)
+      .single();
+
+    if (error) throw error;
+
     res.json({
       success: true,
       message: 'Profile retrieved successfully',

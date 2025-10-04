@@ -1,28 +1,19 @@
-import mongoose from 'mongoose';
+import { supabase } from './supabase';
 import logger from '../utils/logger';
 
 const connectDB = async (): Promise<void> => {
   try {
-    const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/gamified-eco-education';
-    
-    const conn = await mongoose.connect(mongoURI, {
-      // Remove deprecated options
-    });
+    const { data, error } = await supabase.from('users').select('count').limit(1);
 
-    logger.info(`MongoDB Connected: ${conn.connection.host}`);
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+
+    logger.info('Supabase Connected Successfully');
   } catch (error) {
     logger.error('Database connection error:', error);
     process.exit(1);
   }
 };
-
-// Handle connection events
-mongoose.connection.on('disconnected', () => {
-  logger.warn('MongoDB disconnected');
-});
-
-mongoose.connection.on('error', (err) => {
-  logger.error('MongoDB connection error:', err);
-});
 
 export default connectDB;

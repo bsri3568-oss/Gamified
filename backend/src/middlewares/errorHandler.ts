@@ -45,7 +45,7 @@ export const errorHandler = (err: any, req: Request, res: Response, next: NextFu
   }
 
   // Default error
-  res.status(err.statusCode || 500).json({
+  return res.status(err.statusCode || 500).json({
     success: false,
     message: err.message || 'Internal Server Error'
   });
@@ -56,3 +56,5 @@ export const notFound = (req: Request, res: Response, next: NextFunction) => {
   res.status(404);
   next(error);
 };
+
+export { errorHandler, notFound }

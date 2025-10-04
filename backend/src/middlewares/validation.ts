@@ -17,7 +17,6 @@ export const validateRegistration = [
     .isIn(['student', 'teacher', 'parent'])
     .withMessage('Role must be student, teacher, or parent')
 ];
-
 export const validateLogin = [
   body('email')
     .isEmail()
